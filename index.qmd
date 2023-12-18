@@ -1,0 +1,90 @@
+---
+title: "Mini-course compositional data analysis 2024"
+tbl-colwidths: [20, 60, 20]
+---
+
+
+Date: **Jan 9-10 2024**
+
+Room: **Location TBA**
+
+Instructors: Instructor Christian L. Müller, Stefanie Peschel, Viet Tran
+
+------------------------------------------------------------------------
+
+<!-- ::: callout-note -->
+<!-- ## This workshop template -->
+
+<!-- This workshop template contains 4 pages: -->
+
+<!-- -   Home: `index.qmd` (this page) -->
+
+<!-- -   About: `about.qmd` -->
+
+<!-- Two content pages -->
+
+<!-- -   Page without code: `part_1_prep.qmd` -->
+
+<!-- -   Page with R code: `part_2_eda.qmd` -->
+
+<!-- It is straightforward to add more content pages: you need to create a new `.qmd` file (or copy/paste the existing ones), then link the new page inside `_quarto.yml`. -->
+<!-- ::: -->
+
+<!-- ::: callout-tip -->
+<!-- ## Homepage of your workshop -->
+
+<!-- This is the **homepage** `index.qmd` for your workshop, so ideally it should contain some key information such as **time and place, instructors** and information of the course/workshop. -->
+
+<!-- It should be easy to navigate. -->
+<!-- ::: -->
+
+# Welcome!
+
+-   The goal of the workshop is to ... (*insert your message*)
+-   Workshop material can be found in the workshop [github repository](https://github.com).
+
+#### Learning Objectives
+
+At the end of the course, participants will be able to
+
+-   understand key concepts of compositional data analysis
+
+#### Pre-requisites
+
+-   Basic familiarity with R
+
+# Schedule
+
+
+Tuesday
+
+|     Time      |                       Topic                       |    Presenter    |
+|:---------------|:------------------------------------|:---------------|
+| 9:00 - 10:00  |     [Session 1: Intro to compositional sequencing data](1_intro.qmd)     |  Instructor CLM   |
+| 10:15 - 11:00 | Presentation of student data (fast track) | all |
+| 11:15 - 12:00  |     [Session 2: Principles of compositional data](2_principle.qmd)     |  Instructor CLM   |
+| 12:00 - 13:00  |     Lunch break     |  all   |
+| 13:00 - 14:00 | Session 3: Intro to compositional data analysis in R | Instructor SP, VT |
+| 14:15 - 15:15  |     Session 4: Exploratory data analysis of compositional data     |  Instructor CLM   |
+| 15:15 - 15:45  |     Fika     |  all   |
+| 15:45 - 17:00 | Session 5: Differential abundance testing and regression | Instructor CLM, VT |
+| 17:00 - open end  |     Application to own data     |  all  |
+
+Wednesday
+
+|     Time      |                       Topic                       |    Presenter    |
+|:---------------|:------------------------------------|:---------------|
+| 9:00 - 10:00  |     Recap and open issues     |  Instructor CLM   |
+| 10:15 - 11:00  |     Session 6: Time series analysis for compositional data     |  Instructor CLM   |
+| 10:15 - 11:00 | Presentation of student data (fast track) | all |
+| 11:15 - 12:00  |     Session 7: Regression analysis for compositional data     |  Instructor CLM, VT   |
+| 12:00 - 13:00  |     Lunch break     |  all   |
+| 13:00 - 14:00 | Session 8: Network analysis | Instructor CLM, SP |
+| 14:15 - 15:15  |     Session 9: Practical applications of learned concepts in R     |  Instructor SP, VT   |
+| 15:15 - 15:45  |     Fika     |  all   |
+| 15:45 - 16:15 | Session 10: Recap and further topics | Instructor CLM |
+| 16:15 - open end  |     Application to own data     |  all  |
+
+
+
+Website created with the [qtwAcademic template](https://github.com/andreaczhang/qtwAcademic) based on quarto.
