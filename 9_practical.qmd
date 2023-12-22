@@ -1,5 +1,5 @@
 ---
-title: "Principles of compositional data"
+title: "Practical applications of learned concepts in R"
 format: 
   html:
     code-fold: false

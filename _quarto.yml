@@ -17,8 +17,8 @@ website:
     style: "docked"
     search: true
     contents:
-      - 1_intro.qmd
-      - 2_principle.qmd
+      - 4_eda.qmd
+      - 9_practical.qmd
   page-navigation: true
 
 format:

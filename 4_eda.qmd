@@ -1,5 +1,5 @@
 ---
-title: "Principles of compositional data"
+title: "Exploratory data analysis of compositional data"
 format: 
   html:
     code-fold: false
