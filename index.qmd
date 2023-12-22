@@ -40,7 +40,7 @@ Instructors: Christian L. Müller, Stefanie Peschel, Viet Tran
 
 # Welcome!
 
--   The goal of the workshop is to understand and apply concepts of compositional data analysis
+-   The goal of the workshop is to help participants understand and apply concepts of compositional data analysis
 -   Workshop material can be found in the workshop github repository (TBA).
 
 #### Learning Objectives
