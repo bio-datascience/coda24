@@ -1,0 +1,174 @@
+---
+title: "Practical applications of learned concepts in R"
+format: 
+  html:
+    code-fold: false
+    code-tools: true
+bibliography: references.bib
+editor: visual
+---
+
+## Construct a phyloseq Object
+
+Here, we show how to construct the phyloseq object based on the taxonomic table, the ASV table, and the metadata. We use the 88 soil dataset [@lauber2009pyrosequencing] obtained from the [gglasso](https://gglasso.readthedocs.io/en/latest/auto_examples/plot_soil_example.html#sphx-glr-auto-examples-plot-soil-example-py) [@Schaipp2021] tutorial. The raw data can be downloaded from the GitHub repositories. According the to tutorial the data is already processed in the following way:
+
+1.  Filter for OTUs with minimum abundance of $100$ and
+
+2.  add pseudo-count of $1$.
+
+Data sources:
+
+-   Taxonomy: https://github.com/Vlasovets/GGLasso/blob/cfbf01535c88bbcd3ba60f24b5b867472d549f89/data/soil/original/88soils_taxonomy.txt
+
+-   OTU table: https://github.com/Vlasovets/GGLasso/blob/master/data/soil/processed/soil_116.csv
+
+-   Metadata: https://github.com/Vlasovets/GGLasso/blob/master/data/soil/processed/ph.csv
+
+A detailed tutorial on constructing a phyloseq object can be found on the [official phyloseq website](https://joey711.github.io/phyloseq/import-data.html).
+
+We will need 2 packages for analysis:
+
+1.  `phyloseq` for the data structure and
+
+2.  `tidyverse` for data wranging.
+
+```{r}
+#| label: load-packages
+
+library(tidyverse)
+library(phyloseq)
+```
+
+### Load the data
+
+Read the different data tables.
+
+```{r}
+#| label: load-data
+#| warning: false
+#| echo: true
+
+# The OTU table contains rownames in the column X
+otu_raw <- read.csv("./data/soil_raw/soil_116.csv", header = TRUE, row.names = "X")
+tax_raw <- read.table("./data/soil_raw/88soils_taxonomy.txt", 
+                      header = TRUE, sep = "\t")
+# The ph data also contains rownames in X.SampleID
+ph <- read.csv("./data/soil_raw/ph.csv", header = TRUE, row.names = "X.SampleID")
+```
+
+Print the data.
+
+```{r}
+#| label: look-at-data-otu
+#| warning: false
+#| echo: true
+
+head(otu_raw[, 1:6])
+```
+
+The OTU data looks good, but we must fix the column names since they start with `X`.
+
+```{r}
+#| label: look-at-data-tax
+#| warning: false
+#| echo: true
+head(tax_raw)
+dim(tax_raw)
+```
+
+The taxonomic information is for the unfiltered OTUs; therefore, we need to filter this file as well. We also need to divide the data frame into seven taxonomic levels instead of one string for phyloseq.
+
+```{r}
+#| label: look-at-data-ph
+#| warning: false
+#| echo: true
+
+head(ph)
+```
+
+This data frame looks fine.
+
+### Transform the data
+
+Remove the X in the column name so they match with the taxonomy data.
+
+```{r}
+#| label: replace-columnname-otu
+colnames(otu_raw) <- str_remove_all(colnames(otu_raw), pattern = "X")
+```
+
+Filter the taxonomic information and split the data into the different taxonomic ranks.
+
+```{r}
+#| label: filter-tax
+tax_raw <- tax_raw %>%
+  filter(Feature.ID %in% colnames(otu_raw))
+
+# Sanity check: do the dimensions match? 116 Taxonomic assignments
+# and 116 OTUs.
+dim(tax_raw)
+dim(otu_raw)
+```
+
+```{r}
+#| label: split-taxon-column
+taxonomic_ranks <-
+  c("Kingdom", "Phylum", "Class", "Order",
+    "Family", "Genus", "Species")
+
+tax_raw <- tax_raw %>%
+  separate_wider_delim(., cols = "Taxon",
+                       delim = ";", names = taxonomic_ranks)
+
+# Phyloseq needs the OTU ids as rownames
+tax_raw <- tax_raw %>%
+  column_to_rownames("Feature.ID")
+```
+
+### Construct the phylo object
+
+We need the otu table and taxonomic table in matrix form to construct the phylo object. Also, we need to remove the pseudo-count of 1
+
+```{r}
+#| label: transform-to-matrix
+
+# remove pseudo-count of 1
+otu_raw <- otu_raw - 1
+# transform to matrix
+otu <- as.matrix(otu_raw)
+tax <- as.matrix(tax_raw)
+```
+
+Construct the objects for the final phyloseq object
+
+```{r}
+#| label: phylo-step-1
+
+# We have taxa in the columns so we need to specifiy this
+otu <- otu_table(otu, taxa_are_rows = FALSE)
+tax <- tax_table(tax)
+sample_df <- sample_data(ph)
+```
+
+Combine everything in the phylo object.
+
+```{r}
+#| label: final-phylo-object
+
+soil <- phyloseq(otu, tax, sample_df)
+```
+
+Finally, save the data.
+
+```{r}
+#| label: save
+
+saveRDS(soil, file = "./data/soil_processed/soil.RDS")
+```
+
+## Computational environment
+
+```{r}
+#| label: comp-envir
+sessionInfo()
+```

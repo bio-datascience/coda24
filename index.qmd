@@ -85,6 +85,8 @@ Wednesday
 | 15:45 - 16:15 | Session 10: Recap and further topics | Instructor CLM |
 | 16:15 - open end  |     Application to own data     |  all  |
 
+# Additional material
 
+-   [Construct the soil phyloseq object](90_soil_phyloseq.qmd)
 
 Website created with the [qtwAcademic template](https://github.com/andreaczhang/qtwAcademic) based on quarto.
