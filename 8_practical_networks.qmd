@@ -1,0 +1,282 @@
+---
+title: "Practical applications of learned concepts in R"
+format: 
+  html:
+    code-fold: false
+    code-tools: true
+bibliography: references.bib
+editor: visual
+---
+
+## Network learning and analysis
+
+Here, we learn how a microbial association network is constructed and analyzed using the R package NetCoMi.
+
+::: {.callout-tip collapse="false"}
+### The R package NetCoMi
+
+The [NetCoMi](https://github.com/stefpeschel/NetCoMi) [@peschel2021netcomi] package is specifically designed to **construct, analyze, and compare networks** for microbiome data. It implements the complete workflow of learning and analyzing microbial networks explained in lecture 8. Instead of using several functions for each of the steps, `NetCoMi` provides a single function for network construction (`netConstruct()`), so the package streamlines the workflow considerably. The user can choose from a variety of methods for **data preprocessing, association estimation, sparsification, and transformation**. The returned `microNet` object can then be passed to `netAnalyze()` (the network analysis function) so that all necessary information is available for the network analysis workflow.
+:::
+
+### Install and load packages
+
+We start by installing NetCoMi from GitHub. Two of NetCoMi's dependencies are also only available on GitHub. We will install them manually beforehand to avoid problems.
+
+```{r}
+#| label: install-netcomi
+#| eval: false
+
+devtools::install_github("zdk123/SpiecEasi")
+
+devtools::install_github("GraceYoon/SPRING")
+
+devtools::install_github("stefpeschel/NetCoMi", force = TRUE, ref = "TSE",
+                         dependencies = c("Depends", "Imports", "LinkingTo"),
+                         repos = c("https://cloud.r-project.org/",
+                                   BiocManager::repositories()))
+```
+
+Load packages needed in this exercise.
+
+```{r}
+library(NetCoMi)
+library(phyloseq)
+```
+
+### Load the data
+
+The 88 soil dataset [@lauber2009pyrosequencing] is again used in this example.
+
+```{r}
+#| label: load-data
+#| warning: false
+#| echo: true
+
+soil <- readRDS("data/soil_processed/soil.RDS")
+```
+
+Take a look at the data
+
+```{r}
+#| label: look-at-data
+#| warning: false
+#| echo: true
+
+soil
+
+# Read count table
+otu_table(soil)[1:10, 1:6]
+
+# Taxonomy table
+taxtab <- tax_table(soil)
+head(taxtab)
+
+# Sample data
+sampdata <- sample_data(soil)
+head(sampdata)
+```
+
+### Rename genera
+
+If we want to generate a network on genus level, we run into two problems:
+
+-   There are unidentified genera.
+-   Not all genera are unique.
+
+```{r}
+table(taxtab[, "Genus"])
+```
+
+Solutions:
+
+-   Unknown genera are named by higher taxonomic ranks.
+-   Duplicates are numbered to make them unique.
+
+NetCoMi provides a function `renameTaxa()`, which does this job for us. It can also be used to rename the taxa according to a desired pattern.
+
+```{r}
+# Rename taxonomic table and make Rank6 (genus) unique
+soil_renamed <- renameTaxa(soil, 
+                           pat = "<name>", 
+                           substPat = "<name>_<subst_name>(<subst_R>)",
+                           numDupli = "Genus")
+
+taxtab_renamed <- tax_table(soil_renamed)
+
+head(cbind(taxtab[, "Genus"], taxtab_renamed[, "Genus"]), 15)
+```
+
+Now, we can pass the phyloseq object with renamed genera to NetCoMi's `netConstruct()` function.
+
+SpiecEasi is used in the "MB" mode (Meinshausen & Bühlman neighborhood selection) to measure associations between the genera.
+
+A few comments on the arguments:
+
+-   The network is created on genus level.
+-   The data are filtered as follows:
+    -   Only samples with a total of at least 100 reads are included (argument `filtSamp`).
+    -   Only taxa occuring in at least 5 samples are included (argument `filtTax`).
+-   `measure` defines the association or dissimilarity measure, in our case SpiecEasi. Additional arguments are passed to `spiec.easi()` via `measurePar`. We reduce the number of StARS repetitions to 10 to reduce runtime.
+-   Normalization and zero handling is done internally by `spiec.easi()`, so we set `normMethod` and `zeroMethod` to "none".
+-   `sparsMethod` is also set to "none" (SpiecEasi includes StARS model selection to obtain a sparse network).
+-   The "signed" method is used to transform associations into dissimilarities (argument `dissFunc`). Thus, strongly negatively associated taxa have a high dissimilarity and conversely a low similarity, corresponding to low edge weights on the network plot.
+
+```{r}
+#| eval: false
+net <- netConstruct(soil_renamed,
+                    taxRank = "Genus",
+                    filtSamp = "totalReads",
+                    filtSampPar = list(totalReads = 100),
+                    filtTax = "numbSamp",
+                    filtTaxPar = list(numbSamp = 5),
+                    measure = "spieceasi",
+                    measurePar = list(method = "mb",
+                                      pulsar.params = list(rep.num = 10)),
+                    zeroMethod = "none",
+                    normMethod = "none",
+                    sparsMethod = "none", 
+                    dissFunc = "signed",
+                    verbose = 3,
+                    seed = 12345)
+```
+
+```{r}
+#| echo: false
+#| eval: false
+saveRDS(net, file = "data/networks/spieceasi_net.RDS")
+```
+
+```{r}
+#| echo: false
+net <- readRDS("data/networks/spieceasi_net.RDS")
+```
+
+`netConstruct()` returns an object of the class `microNet`, which contains all matrices generated during network construction.
+
+The object also contains an edge list, giving each edge's estimated association, dissimilarity, and adjacency. Let's take a quick look at the edges with the highest and lowest edge weights:
+
+```{r edge_list}
+edgelist <- net$edgelist1[order(net$edgelist1$adja, decreasing = TRUE), ]
+head(edgelist)
+tail(edgelist)
+```
+
+### Network analysis
+
+```{r}
+netprops <- netAnalyze(net, 
+                       clustMethod = "cluster_fast_greedy",
+                       hubPar = "eigenvector",
+                       normDeg = FALSE,
+                       gcmHeat = FALSE)
+```
+
+```{r}
+summary(netprops)
+```
+
+### Highlight node properties
+
+In the first plot, node colors represent the detected clusters and node sizes are scaled by eigenvector centrality. Hub nodes are highlighted by default. Singletons are not included in the plot. To improve the readability, NetCoMi's "intelligent" label shortening approach is used.
+
+Note that nodes are sometimes placed too close together so that the labels overlap. You may need to play around with the repulsion argument until you find a value where the labels are legible, but also the clusters are still well recognizable.
+
+```{r network_plot_single_cluster, fig.width=13, fig.height=10}
+plot(netprops,
+     repulsion = 0.95,
+     rmSingles = TRUE,
+     shortenLabels = "none",
+     labelScale = TRUE,
+     nodeSize = "eigenvector",
+     nodeSizeSpread = 3,
+     nodeColor = "cluster", 
+     hubBorderCol = "gray40",
+     cexNodes = 1.8,
+     cexLabels = 3,
+     edgeTranspHigh = 20,
+     title1 = "Network properties highlighted", 
+     showTitle = TRUE,
+     cexTitle = 2.3,
+     mar = c(1, 3, 4, 8))
+
+legend(0.7, 1.1, cex = 1.7, title = "estimated correlation:",
+       legend = c("+","-"), lty = 1, lwd = 3, col = c("#009900","red"), 
+       bty = "n", horiz = TRUE)
+```
+
+### Highlight data features
+
+We now color nodes according to their phylum. The node sizes are proportional to a taxon's sum of mclr-transformed abundances. As already mentioned in Section \@ref(spring-network), this is the normalization method used by `SPRING`. A color palette from `RColorBrewer` is used here.
+
+```{r network_plot_single_phylum, fig.width=15, fig.height=10}
+# Generate vector with phylum names for node coloring
+phyla <- as.factor(taxtab_renamed[, "Phylum"])
+names(phyla) <- taxtab_renamed[, "Genus"]
+
+# Reorder levels
+phyla <- reorder(phyla, phyla, FUN = length, decreasing = TRUE)
+
+# Create color vector
+colvec <- rainbow(length(levels(phyla)))
+
+plot(netprops,
+     repulsion = 0.95,
+     rmSingles = TRUE,
+     shortenLabels = "none",
+     labelScale = TRUE,
+     nodeSize = "clr",
+     nodeColor = "feature", 
+     featVecCol = phyla, 
+     colorVec =  colvec,
+     #nodeTransp = 20,
+     highlightHubs = FALSE,
+     cexNodes = 1.2,
+          cexLabels = 3,
+     edgeTranspHigh = 20,
+     title1 = "Data features highlighted", 
+     showTitle = TRUE,
+     cexTitle = 2.3,
+     mar = c(1, 10, 4, 6))
+
+# Add legends
+legend(0.7, 1.1, cex = 1.7, title = "estimated correlation:",
+       legend = c("+","-"), lty = 1, lwd = 3, col = c("#009900","red"), 
+       bty = "n", horiz = TRUE)
+
+# Colors used in the legend should be equally transparent as in the plot
+col_transp <- colToTransp(colvec, 60)
+
+legend(-1.8, 1.1, cex = 1.7, pt.cex = 2.5, title = "Phylum:", 
+       legend=levels(phyla), col = col_transp, bty = "n", pch = 16) 
+```
+
+Select Proteobacteria
+
+```{r}
+sel <- names(phyla[phyla == "Proteobacteria"])
+sel <- sel[sel %in% colnames(net$adjaMat1)]
+
+plot(netprops,
+          nodeFilter = "names",
+     nodeFilterPar = sel,
+     repulsion = 0.95,
+     rmSingles = TRUE,
+     shortenLabels = "none",
+     labelScale = TRUE,
+     nodeSize = "eigenvector",
+     nodeSizeSpread = 3,
+     nodeColor = "cluster", 
+     hubBorderCol = "gray40",
+     cexNodes = 1.8,
+     cexLabels = 3,
+     edgeTranspHigh = 20,
+     title1 = "Network properties highlighted", 
+     showTitle = TRUE,
+     cexTitle = 2.3,
+     mar = c(1, 3, 4, 8))
+
+legend(0.7, 1.1, cex = 1.7, title = "estimated correlation:",
+       legend = c("+","-"), lty = 1, lwd = 3, col = c("#009900","red"), 
+       bty = "n", horiz = TRUE)
+```
+
