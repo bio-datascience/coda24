@@ -1,0 +1,631 @@
+---
+title: "Sparse log-contrast and trac on 88 soil"
+format: 
+  html:
+    code-fold: false
+    code-tools: true
+bibliography: references.bib
+editor: visual
+---
+
+## Run sparse log-contrast and trac on 88 soil
+
+We will need several packages for the analysis:
+
+1.  `phyloseq` for the data structure,
+
+2.  `tidyverse` for data wrangling and plotting,
+
+3.  `trac` for fitting models with sparse log-contrast (SLC) and trac,
+
+4.  `kableExtra` for pretty tables,
+
+5.  `reticulate` to specify the python environment and
+
+6.  `ggtree` to plot the tree.
+
+```{r}
+#| label: load-packages
+library(tidyverse) # data wrangling and visualization
+library(phyloseq) # microbiome data wrangling
+library(trac) # trac
+library(kableExtra) # creating tables in rmarkdown
+library(reticulate) # specify the python environment
+library(ggtree)
+reticulate::use_condaenv("trac")
+```
+
+### Load the data
+
+Read the 88 soil dataset which consist in this case of 89 samples with 116 OTUs and the covariate pH.
+
+```{r}
+#| label: load-data
+soil <- readRDS("data/soil_processed/soil.RDS")
+dim(soil@otu_table)
+```
+
+For SLC and trac we need the ingredient:
+
+1.  Response y
+2.  A compositional data matrix x, (i.e. OTUs).
+3.  (trac only:) A binary matrix descendent matrix A.
+
+### Create A matrix
+
+We will first derive the descendant matrix A.
+
+```{r}
+#| label: create-A-matrix
+#| warning: false
+#| echo: true
+
+# 1. extract the taxonomic table from the phyloseq object
+tax <- soil@tax_table@.Data
+
+# 2. add an OTU column based on the rownames and name the column OTU
+tax <- cbind(tax, rownames(tax))
+colnames(tax)[ncol(tax)] <- "OTU"
+# In this example is rooted in bacteria since we only consider bacteria. If one also wants to
+# include archea one needs to add another root node e.g. cbind(root = "life", tax). Need to
+# adjust the for loops in the next steps and add the root to the formula in step 5
+
+# 3. Replace unknown taxonomic assignement on the corresponding level
+# iterate over all levels
+for (i in seq_len(7)) {
+  # add a number when the type is unknown... e.g. "g__"
+  ii <- nchar(tax[, i]) == 3
+  if (sum(ii) > 0)
+    tax[ii, i] <- paste0(tax[ii, i], 1:sum(ii))
+}
+
+# 4. add the ancestor information with ::
+# iterate over all levels
+for (i in 2:8) {
+  tax[, i] <- paste(tax[, i-1], tax[, i], sep = "::")
+}
+tax <- as.data.frame(tax, stringsAsFactors = TRUE)
+
+# 5. form phylo object:
+tree1 <- tax_table_to_phylo(~Kingdom/Phylum/Class/Order/
+                              Family/Genus/Species/OTU,
+                            data = tax, collapse = TRUE)
+
+# 6. convert this to an A matrix to be used for aggregation:
+A <- phylo_to_A(tree1)
+```
+
+Let's see how the taxonomic tree looks like.
+
+```{r}
+#| label: first-glimps-tree
+
+# Define the different taxonomic levels
+tax_levels <- c("Kingdom","Phylum","Class","Order",
+                "Family","Genus","Species")
+
+# Summarize different OTUs by their phylum level
+phylum_preprocess <- enframe(tree1$tip.label) %>%
+  separate(value,
+           into = as.character(tax_levels),
+           sep = "::",
+           remove = FALSE,
+           fill = "right"
+  ) %>%
+  mutate(Phylum = str_remove_all(Phylum, "[a-z]__")) %>%
+  #  mutate(Genus = str_remove_all(Genus, "[a-z]__")) %>%
+  select(Phylum, value) %>%
+  mutate(Phylum = case_when(
+    Phylum == "Acidobacteria" ~ "Acidobacteria",
+    Phylum == "Proteobacteria" ~ "Proteobacteria",
+    Phylum == "Actinobacteria" ~ "Actinobacteria",
+    Phylum == "Firmicutes" ~ "Firmicutes",
+    TRUE ~ "Others"
+  ))
+phylum_group <- split(phylum_preprocess$value, phylum_preprocess$Phylum)
+# match the name of alpha to the nodes of the tree
+nodes_tree <- c(tree1$tip.label, 
+                tree1$node.label)
+
+tree_1 <- groupOTU(tree1, phylum_group)
+tree <- ggtree(tree_1, aes(color = group), layout = "circular") +
+    scale_color_brewer(palette = "Set1", name = "Phylum")
+tree
+```
+
+## Pseudo-count + log transformation
+
+trac and SLC expect log transformed values as inputs. Since $log(0)$ is undefined we need to add a pseudo-count (e.g. $1$).
+
+```{r}
+#| label: log-pseudo
+log_pseudo <- function(x, pseudo_count = 1) log(x + pseudo_count)
+z <- log_pseudo(soil@otu_table@.Data)
+```
+
+## Model fitting
+
+### Train-test split
+
+First we split the data into a train-test split to evaluate the predictive performance at the end. We'll take 2/3 of the observations for training.
+
+```{r}
+#| label: train-test-split
+
+# extact pH
+y <- soil@sam_data$ph
+
+# define seed for reproducibility
+set.seed(1)
+
+# train test split
+ntot <- length(y)
+n <- round(0.75 * ntot)
+tr <- sample(ntot, n)
+
+# define training and test data
+ytr <- y[tr]
+yte <- y[-tr]
+ztr <- z[tr, ]
+zte <- z[-tr, ]
+
+# set the folds for cross-validation
+folds <- ggb:::make_folds(length(ytr), nfolds = 10)
+```
+
+```{r}
+#| label: dim-test
+
+dim(ztr)
+```
+
+```{r}
+#| label: dim-train
+
+dim(zte)
+```
+
+### Sparse log-contrast
+
+We will fit the model on the train data. The task is to predict pH based on the OTUs available. The method will solve the lambda path. Selecting the optimal tuning parameter $\lambda$ is a crucial.
+
+```{r}
+#| label: SLC
+
+fit_log_contrast <- sparse_log_contrast(Z = ztr, y = ytr)
+
+fit_log_contrast$beta %>%
+  as.matrix() %>% 
+  t() %>% 
+  tibble::as_tibble() %>% 
+  dplyr::mutate(frac = fit_log_contrast$fraclist) %>%
+  tidyr::pivot_longer(cols = -frac) %>% 
+  ggplot2::ggplot(ggplot2::aes(x = frac, y = value, 
+                               group = name, color = name)) + 
+  ggplot2::geom_line() +
+  ggplot2::scale_x_log10() + 
+  ggplot2::theme(legend.position = "none") + 
+  ggplot2::labs(y = expression(beta), x = "Fraction of lambda_max")
+```
+
+Cross validate SLC to choose tuning parameter $\lambda$. The function `cv_sparse_log_contrast` can be used to determine the optimal parameter. Dotted line represents the 1SE rule.
+
+```{r}
+#| label: SLC-cv
+
+cvfit_log_contrast <- 
+  cv_sparse_log_contrast(fit_log_contrast, Z = ztr, y = ytr,
+                         folds = folds)
+
+plot_cv_log_contrast <- function(cvfit) {
+  # extract number of non-zero coefficients, mean error and sd
+  tibble(non_zero = cvfit$cv$nonzeros,
+         error = cvfit$cv$m,
+         sd = cvfit$cv$se) %>%
+    ggplot(aes(x = non_zero, y = error)) +
+    theme_classic() +
+    # 1se line
+    geom_vline(xintercept = cvfit$cv$nonzeros[cvfit$cv$i1se],
+               linetype = "longdash") +
+    # ibest line
+    geom_vline(xintercept = cvfit$cv$nonzeros[cvfit$cv$ibest]) +
+    # line + point and error bars
+    geom_line() +
+    geom_point() +
+    geom_errorbar(aes(ymin = error - sd, ymax = error + sd), width = .2,
+                  position = position_dodge(0.05))
+}
+
+plot_cv_log_contrast(cvfit_log_contrast)
+```
+
+Plot the path again, this time with the cross-validation results.
+
+```{r}
+#| label: plot-slc-path
+
+fit_log_contrast$beta %>%
+  as.matrix() %>% 
+  t() %>% 
+  tibble::as_tibble() %>% 
+  dplyr::mutate(frac = fit_log_contrast$fraclist) %>%
+  tidyr::pivot_longer(cols = -frac) %>% 
+  ggplot2::ggplot(ggplot2::aes(x = frac, y = value, 
+                               group = name, color = name)) + 
+  ggplot2::geom_line() +
+  ggplot2::scale_x_log10() + 
+  ggplot2::theme(legend.position = "none") + 
+  ggplot2::labs(y = expression(beta), x = "Fraction of lambda_max") +
+  geom_vline(xintercept = fit_log_contrast$fraclist[cvfit_log_contrast$cv$i1se],
+             linetype = "longdash", alpha = 0.7) +
+    geom_vline(xintercept = fit_log_contrast$fraclist[cvfit_log_contrast$cv$ibest],
+               alpha = 0.5)
+
+```
+
+### trac
+
+Let's continue with the trac model using `trac`.
+
+```{r}
+#| label: trac
+
+fit_trac <- trac(Z = ztr, y = ytr, A = A)
+```
+
+Cross validate trac to choose tuning parameter $\lambda$. The function `cv_trac` can be used to determine the optimal parameter. Dotted line represents the 1SE rule.
+
+```{r}
+#| label: trac-cv
+
+cvfit_trac <- 
+  cv_trac(fit_trac, Z = ztr, y = ytr, A = A,
+                         folds = folds)
+
+plot_cv_trac <- function(cvfit) {
+  # extract number of non-zero coefficients, mean error and sd
+  tibble(non_zero = cvfit$cv[[1]]$nonzeros,
+         error = cvfit$cv[[1]]$m,
+         sd = cvfit$cv[[1]]$se) %>%
+    ggplot(aes(x = non_zero, y = error)) +
+    theme_classic() +
+    # 1se line
+    geom_vline(xintercept = cvfit$cv[[1]]$nonzeros[cvfit$cv[[1]]$i1se],
+               colour = "gray", linetype = "longdash") +
+    # ibest line
+    geom_vline(xintercept = cvfit$cv[[1]]$nonzeros[cvfit$cv[[1]]$ibest],
+               colour = "gray50", linetype = "longdash") +
+    # line + point and error bars
+    geom_line() +
+    geom_point() +
+    geom_errorbar(aes(ymin = error - sd, ymax = error + sd), width = .2,
+                  position = position_dodge(0.05))
+}
+
+plot_cv_trac(cvfit_trac)
+```
+
+Plot the coefficient path.
+
+```{r}
+#| label: trac-path
+
+fit_trac[[1]]$alpha %>%
+  as.matrix() %>% 
+  t() %>% 
+  tibble::as_tibble() %>% 
+  dplyr::mutate(frac = fit_trac[[1]]$fraclist) %>%
+  tidyr::pivot_longer(cols = -frac) %>% 
+  ggplot2::ggplot(ggplot2::aes(x = frac, y = value, 
+                               group = name, color = name)) + 
+  ggplot2::geom_line() +
+  ggplot2::scale_x_log10() + 
+  ggplot2::theme(legend.position = "none") + 
+  ggplot2::labs(y = expression(alpha), x = "Fraction of lambda_max") +
+  geom_vline(xintercept = fit_trac[[1]]$fraclist[cvfit_trac$cv[[1]]$i1se],
+             linetype = "longdash", alpha = 0.7) +
+    geom_vline(xintercept = fit_trac[[1]]$fraclist[cvfit_trac$cv[[1]]$ibest],
+               alpha = 0.5)
+```
+
+### Weighted trac
+
+The path of trac with normal weights seems interesting. It might be better to use the weighted trac, nudging the model to select on a lower taxonomic level.
+
+```{r}
+#| label: weighted-trac
+
+fit_weighted_trac <- trac(Z = ztr, y = ytr, A = A, w = colSums(as.matrix(A))^0.5)
+```
+
+```{r}
+#| label: weighted-trac-cv
+
+cvfit_weighted_trac <- 
+  cv_trac(fit_weighted_trac, Z = ztr, y = ytr, A = A,
+          folds = folds)
+
+plot_cv_trac(cvfit_weighted_trac)
+```
+
+```{r}
+#| label: weighted-trac-path
+
+fit_weighted_trac[[1]]$alpha %>%
+  as.matrix() %>% 
+  t() %>% 
+  tibble::as_tibble() %>% 
+  dplyr::mutate(frac = fit_weighted_trac[[1]]$fraclist) %>%
+  tidyr::pivot_longer(cols = -frac) %>% 
+  ggplot2::ggplot(ggplot2::aes(x = frac, y = value, 
+                               group = name, color = name)) + 
+  ggplot2::geom_line() +
+  ggplot2::scale_x_log10() + 
+  ggplot2::theme(legend.position = "none") + 
+  ggplot2::labs(y = expression(alpha), x = "Fraction of lambda_max") +
+  geom_vline(xintercept = fit_weighted_trac[[1]]$fraclist[cvfit_weighted_trac$cv[[1]]$i1se],
+             linetype = "longdash", alpha = 0.7) +
+    geom_vline(xintercept = fit_weighted_trac[[1]]$fraclist[cvfit_weighted_trac$cv[[1]]$ibest],
+               alpha = 0.5)
+
+```
+
+## Check prediction
+
+Let's evaluate the different models on the test set and see how they perform based on the RMSE.
+
+```{r}
+#| label: predictions
+
+yhat_slc <- predict_sparse_log_contrast(fit_log_contrast, new_Z = zte)
+yhat_trac <- predict_trac(fit_trac, new_Z = zte)
+yhat_weighted_trac <- predict_trac(fit_weighted_trac, new_Z = zte)
+
+yhat_slc_1se <- yhat_slc[, cvfit_log_contrast$cv$i1se]
+yhat_slc_best <- yhat_slc[, cvfit_log_contrast$cv$ibest]
+
+yhat_trac_1se <- yhat_trac[[1]][, cvfit_trac$cv[[1]]$i1se]
+yhat_trac_best <- yhat_trac[[1]][, cvfit_trac$cv[[1]]$ibest]
+
+yhat_weighted_trac_1se <- yhat_weighted_trac[[1]][, cvfit_weighted_trac$cv[[1]]$i1se]
+yhat_weighted_trac_best <- yhat_weighted_trac[[1]][, cvfit_weighted_trac$cv[[1]]$ibest]
+
+method_col <- c("SLC (1SE)",  "SLC (best)", "trac (1SE)", "trac (best)",
+                "Weighted trac (1SE)", "Weighted trac (best)")
+RMSE <- c(sqrt(mean((yte - yhat_slc_1se)^2)),
+          sqrt(mean((yte - yhat_slc_best)^2)),
+          sqrt(mean((yte - yhat_trac_1se)^2)),
+          sqrt(mean((yte - yhat_trac_best)^2)),
+          sqrt(mean((yte - yhat_weighted_trac_1se)^2)),
+          sqrt(mean((yte - yhat_weighted_trac_best)^2)))
+
+NZ <- c(sum(fit_log_contrast$beta[, cvfit_log_contrast$cv$i1se] != 0),
+        sum(fit_log_contrast$beta[, cvfit_log_contrast$cv$ibest] != 0),
+        sum(fit_trac[[1]]$alpha[, cvfit_trac$cv[[1]]$i1se] != 0),
+        sum(fit_trac[[1]]$alpha[, cvfit_trac$cv[[1]]$ibest] != 0),
+        sum(fit_weighted_trac[[1]]$alpha[, cvfit_weighted_trac$cv[[1]]$i1se] != 0),
+        sum(fit_weighted_trac[[1]]$alpha[, cvfit_weighted_trac$cv[[1]]$ibest] != 0))
+
+data.frame(method_col, NZ, RMSE) %>%
+  rename(Method = method_col) %>%
+  mutate(RMSE = round(RMSE, digits = 3)) %>%
+  kbl()
+```
+
+Let's plot the out of sample prediction vs the ground truth.
+
+```{r}
+#| label: out-of-sample-plot
+
+tibble(yte = yte,
+           "SLC (1se)" = yhat_slc_1se,
+           "SLC (best)" = yhat_slc_best,
+           "trac (1se)" = yhat_trac_1se,
+           "trac (best)" = yhat_trac_best,
+           "Weighted trac (1se)" = yhat_weighted_trac_1se,
+           "Weighted trac (best)" = yhat_weighted_trac_best) %>%
+  pivot_longer(cols = -yte) %>%
+  ggplot(aes(x = yte, y = value)) +
+  geom_point() +
+  theme_bw() +
+  geom_abline() +
+  facet_wrap(~name, ncol = 2) +
+  ylab("Predicted pH") +
+  xlab("True pH")
+```
+
+Finally, plot out of sample error vs the different number of non-zero coefficients. for SLC, trac, and weighted trac.
+
+```{r}
+#| label: plot-slc-sparsity-vs-mse
+plot_nzz_mse <- function(yhat, y, coefs, i1se, ibest) {
+  mse <- colMeans((yhat - y)^2)
+  nnz <- colSums(coefs != 0)
+  data.frame(mse, nnz) %>%
+    ggplot(aes(x = nnz, y = mse)) +
+    geom_point() +
+    geom_vline(xintercept = nnz[i1se], linetype = "longdash") + 
+    geom_vline(xintercept = nnz[ibest])
+}
+
+plot_nzz_mse(yhat = yhat_slc, y = yte, coefs = fit_log_contrast$beta,
+             i1se = cvfit_log_contrast$cv$i1se,
+             ibest = cvfit_log_contrast$cv$ibest)
+```
+
+```{r}
+#| label: plot-trac-sparsity-vs-mse
+plot_nzz_mse(yhat = yhat_trac[[1]], y = yte, coefs = fit_trac[[1]]$alpha,
+             i1se = cvfit_trac$cv[[1]]$i1se,
+             ibest = cvfit_trac$cv[[1]]$ibest)
+```
+
+```{r}
+#| label: plot-weighted-trac-sparsity-vs-mse
+plot_nzz_mse(yhat = yhat_weighted_trac[[1]], 
+             y = yte, coefs = fit_weighted_trac[[1]]$alpha,
+             i1se = cvfit_weighted_trac$cv[[1]]$i1se,
+             ibest = cvfit_weighted_trac$cv[[1]]$ibest)
+```
+
+## Plot coefficients and trac results on a tree
+
+### SLC
+
+Start with the $\beta$ coefficients of the 1SE solution. The first plot shows the last known taxonomic annotation for the corresponding OTU.
+
+```{r}
+#| label: plot-slc-coef-last-known
+# get which coefficients are not zero
+nzz <- function(coefs) {
+  coefs[coefs != 0]
+}
+# for slc 1se
+slc_names <- fit_log_contrast$beta[, cvfit_log_contrast$cv$i1se] %>%
+  nzz 
+
+# get the last known name for slc
+slc_names_last_known <- soil@tax_table@.Data %>%
+  as.data.frame %>%
+  rownames_to_column() %>%
+  filter(rowname %in% names(slc_names))
+
+last_known_tax <- apply(slc_names_last_known, MARGIN = 2, 
+      FUN = function(x) str_length(x) == 3) 
+
+last_known_slc <- c()
+for (i in 1:nrow(slc_names_last_known)) {
+  last_known_slc <- append(last_known_slc,
+  paste0(slc_names_last_known[i, (8 - rowSums(last_known_tax)[i])], "::",
+         slc_names_last_known[i, 1]))
+}
+
+last_known_slc <- 
+  data.frame(name = slc_names_last_known$rowname, last_name = last_known_slc)
+
+# start plotting
+fit_log_contrast$beta[, cvfit_log_contrast$cv$i1se] %>%
+  nzz %>%
+  enframe() %>% 
+  left_join(last_known_slc) %>%
+  ggplot2::ggplot(ggplot2::aes(x = fct_reorder(last_name, value), y = value)) + 
+  ggplot2::geom_point() +
+  geom_segment(aes(x = fct_reorder(last_name, value), 
+                   xend= fct_reorder(last_name, value),
+                   y=0, yend=value)) +
+  theme_bw()+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  scale_x_discrete(label=function(x) str_split_i(x, pattern = "::", i = 1)) +
+  xlab("OTUs (as lowest known taxonomic rank)") +
+  ylab(expression(beta))
+
+```
+
+Once again only with the the OTU ids.
+
+```{r}
+#| label: plot-slc-coef-otu-name
+fit_log_contrast$beta[, cvfit_log_contrast$cv$i1se] %>%
+  nzz %>%
+  enframe() %>% 
+  ggplot2::ggplot(ggplot2::aes(x = fct_reorder(name, value), y = value)) + 
+  ggplot2::geom_point() +
+  geom_segment(aes(x = fct_reorder(name, value), 
+                   xend= fct_reorder(name, value),
+                   y=0, yend=value)) +
+    theme_bw()+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  scale_x_discrete(label=function(x) str_split_i(x, pattern = "::", i = 1)) +
+  xlab("OTUs") +
+  ylab(expression(beta))
+```
+
+Sparse log-contrast tree
+
+```{r}
+#| label: plot-slc-coef-tree
+slc_selected <- tax %>%
+  rownames_to_column() %>%
+  filter(rowname %in% names(slc_names)) %>%
+  select(OTU) %>%
+  mutate(OTU = as.character(OTU),
+         SLC = TRUE)
+
+tree_slc <- tree %<+% slc_selected
+tree_slc +
+  geom_point2(aes(subset = SLC == TRUE), colour = "black", alpha = 0.8)
+```
+
+### trac
+
+A possible reason for the behavior of trac could be because of the filter (OTUs present at least $100$ times). The included OTUs could be biased towards a specific Phylum.
+
+```{r}
+#| label: trac-coef
+fit_trac[[1]]$alpha[, cvfit_trac$cv[[1]]$i1se] %>%
+  nzz %>%
+  enframe() %>%
+  arrange(desc(value)) %>%
+  kbl()
+```
+
+```{r}
+#| label: plot-trac-tree
+tree_df <- enframe(nodes_tree) %>%
+  select(-name)
+
+trac_selected <- fit_trac[[1]]$alpha[, cvfit_trac$cv[[1]]$i1se] %>%
+  nzz %>%
+  names %>%
+  enframe %>%
+  mutate(selected_trac = TRUE) %>%
+  select(-name) %>%
+  right_join(tree_df)
+
+tree_trac <- tree %<+% trac_selected
+tree_trac +
+  geom_point2(aes(subset = selected_trac == TRUE), colour = "black", alpha = 0.8)
+```
+
+### Weighted trac
+
+Therefore, using weighted trac could be better here.
+
+```{r}
+#| label: weighted-trac-coefs
+fit_weighted_trac[[1]]$alpha[, cvfit_weighted_trac$cv[[1]]$i1se] %>%
+  nzz %>%
+  enframe() %>%
+  arrange(desc(value)) %>%
+  kbl()
+```
+
+```{r}
+#| label: plot-weighted-trac
+fit_weighted_trac[[1]]$alpha[, cvfit_weighted_trac$cv[[1]]$i1se] %>%
+  nzz %>%
+  enframe() %>%
+  arrange(desc(value)) %>%
+  kbl()
+
+weighted_trac_selected <- 
+  fit_weighted_trac[[1]]$alpha[, cvfit_weighted_trac$cv[[1]]$i1se] %>%
+  nzz %>%
+  names %>%
+  enframe %>%
+  mutate(selected_weighted_trac = TRUE) %>%
+  select(-name) %>%
+  right_join(tree_df)
+
+tree_weighted_trac <- tree %<+% weighted_trac_selected
+tree_weighted_trac +
+  geom_point2(aes(subset = selected_weighted_trac == TRUE), 
+              colour = "black", alpha = 0.8)
+```
+
+## Computational environment
+
+```{r}
+#| label: comp-envir
+sessionInfo()
+```
