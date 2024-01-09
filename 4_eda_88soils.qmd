@@ -21,23 +21,28 @@ Here we use the "88 soils" data set [@lauber2009pyrosequencing] containing bacte
 #| echo: true
 
 library(phyloseq)
+library(DESeq2)
+library(vsn)
+library(microbiome)
 library(dplyr)
 library(ggplot2)
+library(gridExtra)
 
 soil <- readRDS("data/soil_processed/soil.RDS")
 ```
 
-Take a look at the data
+### Exploration of the phyloseq object
 
 ```{r}
-#| label: look_at_data
+#| label: explore_phyloseq
 #| warning: false
 #| echo: true
 
 soil
 
 # Read count table
-otu_table(soil)[1:10, 1:6]
+otutab <- otu_table(soil)
+otutab[1:10, 1:6]
 
 # Taxonomy table
 taxtab <- tax_table(soil)
@@ -47,40 +52,180 @@ head(taxtab)
 sampdata <- sample_data(soil)
 head(sampdata)
 ```
+### Sequencing depth / library size
 
-### Microbial composition
-
-We first have a look at the microbial compositions on phylum level.
+Plot the sequencing depth (total number of reads) of each sample.
 
 ```{r}
+#| label: sequencing_depth
+
+# Add sequencing depth to sample data
+sampdata <- data.frame(SampleID = rownames(sampdata),
+                       ph = sampdata$ph,
+                       TotalReads = sample_sums(soil))
+
+# Add data frame to phyloseq object
+sample_data(soil) <- sampdata
+
+p <- ggplot(sampdata, aes(x = SampleID, y = TotalReads)) +
+  theme_bw() +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_blank()) +
+  xlab("Sample")
+p
+```
+
+
+```{r}
+min(sampdata$TotalReads)
+
+torm <- sampdata[which.min(sampdata$TotalReads), "SampleID"]
+```
+
+Remove the sample with only one read count.
+
+```{r}
+#| label: remove_sample
+
+soil <- subset_samples(soil, SampleID != torm)
+soil
+
+otutab <- as(otu_table(soil), "matrix")
+sampdata <- sample_data(soil)
+```
+
+
+### Sparsity
+
+Number of zeros and percentage of zeros in the OTU table
+
+```{r}
+#| label: sparsity
+
+nvar <-dim(otutab)[2]
+nsamp <- dim(otutab)[1]
+
+sum(otutab == 0)
+sum(otutab == 0) / (nvar * nsamp) * 100
+```
+
+`r round(sum(otutab == 0) / (nvar * nsamp) * 100)` of the data are zeros.
+
+### Visualize microbial composition
+
+Have a look at the microbial compositions on phylum level.
+
+```{r}
+#| label: agglomerate_phylum
+# Agglomerate to phylum level
 soil_phyla <- tax_glom(soil, taxrank = "Phylum")
 ```
 
 
 Stacked bar plot of the observed "absolute" abundances:
 
-```{r}
-plot_bar(soil_phyla, fill = "Phylum")
+```{r, fig.width=8, fig.height=3}
+#| label: barplot_absolute
+#| fig-width: 8
+#| fig-height: 3
+
+p <- plot_bar(soil_phyla, fill = "Phylum")
+
+p + theme_bw() +
+  ylab("Absolute abundance") +
+  theme(axis.text.x = element_blank()) +
+  scale_fill_brewer(palette = "Set2")
 ```
 
 Stacked bar plot of the relative abundances:
 
 ```{r}
 # Compute relative abundances
-otutab <- otu_table(soil_phyla)
-otutab <- sweep(otutab, 1, FUN = `/`, rowSums(otutab))*100
-soil_phyla@otu_table@.Data <- otutab
+soil_phyla_rel <- transform_sample_counts(soil_phyla, function(x) x/sum(x))
 ```
+
+```{r, fig.width=8, fig.height=3}
+#| label: barplot_relative
+#| fig-width: 8
+#| fig-height: 3
+p <- plot_bar(soil_phyla_rel, fill = "Phylum")
+
+p + theme_bw() +
+  ylab("Absolute abundance") +
+  theme(axis.text.x = element_blank()) +
+  scale_fill_brewer(palette = "Set2")
+```
+
+### Zero replacement 
 
 ```{r}
-plot_bar(soil_phyla, fill = "Phylum")
+#| label: replace_zeros
+
+soil_zrepl <- soil
+otu_table(soil_zrepl) <- otu_table(soil_zrepl) + 1
 ```
 
-### Distance calculation and visualization
+The `zCompositions` R package would provide more complex methods for zero replacement.
+
+### Mean - variance relationship
+
+```{r, fig.width=8, fig.height=5}
+#| label: mean-sd-plot_raw
+#| fig-width: 8
+#| fig-height: 5
+otutab <- as(otu_table(soil_zrepl), "matrix")
+vsn::meanSdPlot(t(otutab), plot = FALSE)$gg +
+  theme_bw() + theme(text = element_text(size = 16))
+```
+
+### Normalization
+
+We compare three normalization methods we have already seen in the lectures:
+
+* CLR (centered log-ratio) transformation
+* Variance stabilizing transformation (vst)
+* Regularized log transformation (similar to vst but more robust when the size factors vary widely).
+
+```{r}
+#| label: normalization
+
+# clr
+soil_clr <- microbiome::transform(soil_zrepl, transform = "clr")
+clr_counts <- otu_table(soil_clr)
+
+# vst (function expects samples in columns)
+vst_counts <- DESeq2::varianceStabilizingTransformation(t(otutab), 
+                                                         fitType = "local")
+
+# rlog
+rlog_counts <- DESeq2::rlog(t(otutab), fitType = "local")
+```
+Create mean-sd plots using the function from `vsn` package.
+
+```{r, fig.width=12, fig.height=4}
+#| label: mean-sd-plots_norm
+#| fig-width: 12
+#| fig-height: 4
+pclr <- meanSdPlot(t(clr_counts), plot = FALSE)$gg +
+  theme_bw() + theme(text = element_text(size = 16)) + ggtitle("clr")
+pvst <- meanSdPlot(vst_counts, plot = FALSE)$gg +
+  theme_bw() + theme(text = element_text(size = 16)) + ggtitle("vst")
+prlog <- meanSdPlot(rlog_counts, plot = FALSE)$gg +
+  theme_bw() + theme(text = element_text(size = 16)) + ggtitle("rlog")
+
+gridExtra::grid.arrange(pclr, pvst, prlog, 
+             ncol = 3, nrow = 1)
+```
+
+
+### Low-dimensional representation
+
+In this section, we want to plot the data in the two-dimensional space. We therefore compute distances between all samples and perform multi-dimensional scaling (MDS). Here, we use the non-normalized data (see [@mcKnight2019methods])
 
 Distance functions provided by the phyloseq package:
 
 ```{r}
+#| label: distances
 dist_methods <- unlist(distanceMethodList)
 dist_methods
 ```
@@ -88,22 +233,32 @@ dist_methods
 #### MDS plot with Bray Curtis distance
 
 ```{r}
-soil_mds <- ordinate(soil, method = "MDS", distance = "bray")
+#| label: mds_bray
+
+soil_mds_bray <- ordinate(soil, method = "MDS", distance = "bray")
 ```
 
 First a plot without coloring metadata.
 
-```{r}
-mds_soil <- plot_ordination(soil, soil_mds, title = "MDS of 88 soil data")
+```{r, fig.width=8, fig.height=5}
+#| label: MDS_plot_bray
+#| fig-width: 8
+#| fig-height: 5
+mds_soil_bray <- plot_ordination(soil, soil_mds_bray, 
+                                 title = "MDS of 88 soil data")
 
-mds_soil + theme_bw() + theme(text = element_text(size = 14)) + geom_point(size = 3)
+mds_soil_bray + 
+  theme_bw() + 
+  theme(text = element_text(size = 14)) + 
+  geom_point(size = 3)
 ```
 
 One could identify two main clusters, separated by the first axis. 
 
-We now build two pH categories (acidic and basic) and color the samples in the MDS plot accordingly.
+We now build two **pH categories (acidic and basic)** and color the samples in the MDS plot accordingly.
 
 ```{r}
+#| label: add_cat_var
 # Add categorical variable to the data frame 
 sampdata$ph_type <- as.factor(ifelse(sampdata$ph < 6.7, "acid", "basic")) 
 
@@ -118,29 +273,74 @@ sample_data(soil) <- sampdata
 ```
 
 
-```{r}
-mds_soil <- plot_ordination(soil, soil_mds, color = "ph_type",
-                            title = "MDS of 88 soil data colored by pH type")
+```{r, fig.width=8, fig.height=5}
+#| label: MDS_plot_bray_labeled
+#| fig-width: 8
+#| fig-height: 5
+mds_soil_bray <- plot_ordination(soil, soil_mds_bray, color = "ph_type",
+                                 title = "")
 
-mds_soil + theme_bw() + theme(text = element_text(size = 14)) + geom_point(size = 3)
+mds_soil_bray + 
+  theme_bw() + 
+  theme(text = element_text(size = 14)) + 
+  geom_point(size = 3) +
+  ggtitle("MDS of 88 soil data colored by pH type")
 ```
 
 Indeed, pH type separates samples along Axis.1. 
+
+#### MDS plot with Aitchison distance
+
+We generate another MDS plot, but this time using the Aitchison distance, which is simply the Euclidean distance of clr-transformed counts.
+
+```{r}
+#| label: mds_aitchison
+
+soil_mds_ait <- ordinate(soil_clr, method = "MDS", distance = "euclidean")
+```
+
+```{r, fig.width=8, fig.height=4}
+#| label: MDS_plot_bray_aitchison
+#| fig-width: 8
+#| fig-height: 4
+
+sample_data(soil_clr) <- sampdata
+
+mds_soil_ait <- plot_ordination(soil_clr, soil_mds_ait, color = "ph_type",
+                                title = "")
+
+
+p1 <- mds_soil_bray + 
+  theme_bw() + 
+  theme(text = element_text(size = 12)) + 
+  geom_point(size = 3) +
+  ggtitle("Bray Curtis dissimilarity")
+
+p2 <- mds_soil_ait + 
+  theme_bw() + 
+  theme(text = element_text(size = 12)) + 
+  geom_point(size = 3) +
+  ggtitle("Aitchison distance")
+
+gridExtra::grid.arrange(p1, p2,  
+             ncol = 2, nrow = 1)
+```
+
 
 #### MDS plots for several distance measures
 
 Now, we apply all available distance functions to the data, compute the corresponding MDS embeddings, and plot them.
 
-First, we have to remove the unwanted distances.
-
 ```{r}
-filtered_methods <- dist_methods[!dist_methods %in% c("unifrac", "wunifrac",
-                                                      "dpcoa", "ANY", "morisita")]
+# Remove some unwanted distances
+sel_dist <- dist_methods[!dist_methods %in% c("unifrac", "wunifrac",
+                                              "dpcoa", "ANY", "z")]
 ```
 
 Now we can apply these distance metrics to our data. 
 
 ```{r}
+#| label: MDS_multiple_dist
 gather_ordination_data <- function(d_method, phylo_obj){
   # Calculate the MDS matrix using the distance
   ordinate_obj <- ordinate(phylo_obj, method = "MDS", distance = d_method)
@@ -151,7 +351,7 @@ gather_ordination_data <- function(d_method, phylo_obj){
   return(plot_data)
 }
 
-mds_plot_data <- bind_rows(lapply(filtered_methods, gather_ordination_data,
+mds_plot_data <- bind_rows(lapply(sel_dist, gather_ordination_data,
                                   phylo_obj = soil))
 
 head(mds_plot_data)
@@ -159,7 +359,8 @@ head(mds_plot_data)
 
 We color again according to pH type.
 
-```{r}
+```{r, fig.width=14, fig.height=9}
+#| label: MDS_plots_multiple_dist
 #| fig-width: 14
 #| fig-height: 9
 
