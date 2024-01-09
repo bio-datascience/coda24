@@ -52,6 +52,30 @@ head(taxtab)
 sampdata <- sample_data(soil)
 head(sampdata)
 ```
+
+### Add sample variables
+
+We add a few sample variables we will need later in this tutorial:
+
+* sampleID
+* phType (acidic if pH<6.7 and basic if pH>6.7)
+* totalReads (total number of reads per sample)
+
+```{r}
+#| label: add_sample_data
+sampdata <- data.frame(sampleID = rownames(sampdata),
+                       totalReads = sample_sums(soil),
+                       ph = sampdata$ph)
+
+sampdata$phType <- as.factor(ifelse(sampdata$ph < 6.7, "acid", "basic")) 
+
+head(sampdata)
+table(sampdata$phType)
+
+# Add data frame to phyloseq object
+sample_data(soil) <- sampdata
+```
+
 ### Sequencing depth / library size
 
 Plot the sequencing depth (total number of reads) of each sample.
@@ -59,15 +83,7 @@ Plot the sequencing depth (total number of reads) of each sample.
 ```{r}
 #| label: sequencing_depth
 
-# Add sequencing depth to sample data
-sampdata <- data.frame(SampleID = rownames(sampdata),
-                       ph = sampdata$ph,
-                       TotalReads = sample_sums(soil))
-
-# Add data frame to phyloseq object
-sample_data(soil) <- sampdata
-
-p <- ggplot(sampdata, aes(x = SampleID, y = TotalReads)) +
+p <- ggplot(sampdata, aes(x = sampleID, y = totalReads)) +
   theme_bw() +
   geom_bar(stat = "identity") +
   theme(axis.text.x = element_blank()) +
@@ -77,9 +93,9 @@ p
 
 
 ```{r}
-min(sampdata$TotalReads)
+min(sampdata$totalReads)
 
-torm <- sampdata[which.min(sampdata$TotalReads), "SampleID"]
+torm <- sampdata[which.min(sampdata$totalReads), "sampleID"]
 ```
 
 Remove the sample with only one read count.
@@ -87,7 +103,7 @@ Remove the sample with only one read count.
 ```{r}
 #| label: remove_sample
 
-soil <- subset_samples(soil, SampleID != torm)
+soil <- subset_samples(soil, sampleID != torm)
 soil
 
 otutab <- as(otu_table(soil), "matrix")
@@ -158,14 +174,18 @@ p + theme_bw() +
 
 ### Zero replacement 
 
+Zero counts are replaced by a unit pseudo count. In doing so, ratios between non-zero counts are preserved, which is not the case if a pseudo count is added to the whole matrix (which is also common).
+
 ```{r}
 #| label: replace_zeros
 
 soil_zrepl <- soil
-otu_table(soil_zrepl) <- otu_table(soil_zrepl) + 1
+otu_table(soil_zrepl)[otu_table(soil_zrepl) == 0] <- 1
+
+otutab_zrepl <- as(otu_table(soil_zrepl), "matrix")
 ```
 
-The `zCompositions` R package would provide more complex methods for zero replacement.
+The `zCompositions` R package provides more complex methods for zero replacement.
 
 ### Mean - variance relationship
 
@@ -173,7 +193,6 @@ The `zCompositions` R package would provide more complex methods for zero replac
 #| label: mean-sd-plot_raw
 #| fig-width: 8
 #| fig-height: 5
-otutab <- as(otu_table(soil_zrepl), "matrix")
 vsn::meanSdPlot(t(otutab), plot = FALSE)$gg +
   theme_bw() + theme(text = element_text(size = 16))
 ```
@@ -194,12 +213,13 @@ soil_clr <- microbiome::transform(soil_zrepl, transform = "clr")
 clr_counts <- otu_table(soil_clr)
 
 # vst (function expects samples in columns)
-vst_counts <- DESeq2::varianceStabilizingTransformation(t(otutab), 
+vst_counts <- DESeq2::varianceStabilizingTransformation(t(otutab_zrepl), 
                                                          fitType = "local")
 
 # rlog
-rlog_counts <- DESeq2::rlog(t(otutab), fitType = "local")
+rlog_counts <- DESeq2::rlog(t(otutab_zrepl), fitType = "local")
 ```
+
 Create mean-sd plots using the function from `vsn` package.
 
 ```{r, fig.width=12, fig.height=4}
@@ -217,6 +237,22 @@ gridExtra::grid.arrange(pclr, pvst, prlog,
              ncol = 3, nrow = 1)
 ```
 
+### Alpha diversity
+
+Another common task is diversity analysis. Alpha diversity summarizes the distribution of species abundances in a given sample.
+
+```{r, fig.width=10, fig.height=4}
+#| label: alpha_diversity_soil
+#| fig-width: 10
+#| fig-height: 4
+
+pAlpha <- plot_richness(soil,
+                       color = "phType",
+                       measures = c("Observed", "Shannon", "InvSimpson", "Chao1"),
+                       title = "Alpha diveristy for 88 soil data")
+
+pAlpha + geom_point(size = 2) + theme_bw() + theme(axis.text.x = element_blank())
+```
 
 ### Low-dimensional representation
 
@@ -255,17 +291,6 @@ mds_soil_bray +
 
 One could identify two main clusters, separated by the first axis. 
 
-We now build two **pH categories (acidic and basic)** and color the samples in the MDS plot accordingly.
-
-```{r}
-#| label: add_cat_var
-# Add categorical variable to the data frame 
-sampdata$ph_type <- as.factor(ifelse(sampdata$ph < 6.7, "acid", "basic")) 
-
-head(sampdata)
-
-table(sampdata$ph_type)
-```
 Add the new data frame to the phyloseq object.
 
 ```{r}
@@ -277,7 +302,7 @@ sample_data(soil) <- sampdata
 #| label: MDS_plot_bray_labeled
 #| fig-width: 8
 #| fig-height: 5
-mds_soil_bray <- plot_ordination(soil, soil_mds_bray, color = "ph_type",
+mds_soil_bray <- plot_ordination(soil, soil_mds_bray, color = "phType",
                                  title = "")
 
 mds_soil_bray + 
@@ -306,7 +331,7 @@ soil_mds_ait <- ordinate(soil_clr, method = "MDS", distance = "euclidean")
 
 sample_data(soil_clr) <- sampdata
 
-mds_soil_ait <- plot_ordination(soil_clr, soil_mds_ait, color = "ph_type",
+mds_soil_ait <- plot_ordination(soil_clr, soil_mds_ait, color = "phType",
                                 title = "")
 
 
@@ -364,7 +389,7 @@ We color again according to pH type.
 #| fig-width: 14
 #| fig-height: 9
 
-mds_soil <- ggplot(mds_plot_data, aes(x=Axis.1, y=Axis.2, color=ph_type)) +
+mds_soil <- ggplot(mds_plot_data, aes(x=Axis.1, y=Axis.2, color=phType)) +
   geom_point() +
   facet_wrap(~ distance, scales = "free") +
   labs(x="Axis.1",

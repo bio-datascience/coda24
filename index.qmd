@@ -79,7 +79,7 @@ Wednesday
 |:-----------------|:------------------------------------|:-----------------|
 |  9:00 - 09:30    | Recap and open issues                                                         | Instructor CLM     |
 |  9:45 - 10:45    | Session 6: Regression analysis for compositional data                         | Instructor CLM, VT |
-| 11:00 - 12:00    | [Session 7: Estimating microbial association networks](slides/07-Microbial_association_networks.pdf)                                                   | Instructor CLM, SP |
+| 11:00 - 12:00    | [Session 7: Estimating microbial association networks](slides/07-Microbial_association_networks_outlook.pdf)                                                   | Instructor CLM, SP |
 | 12:00 - 13:00    | Lunch break                                                                   | all                |
 | 13:00 - 13:30    | [Session 8: Practical applications of learned concepts in R (regression)](9_practical.qmd) | Instructor SP, VT  |
 | 13:30 - 14:00    | [Session 8: Practical applications of learned concepts in R (networks)](8_practical_networks.qmd) | Instructor SP, VT  |
