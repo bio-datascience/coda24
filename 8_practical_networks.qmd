@@ -23,7 +23,7 @@ The [NetCoMi](https://github.com/stefpeschel/NetCoMi) [@peschel2021netcomi] pack
 We start by installing NetCoMi from GitHub. Two of NetCoMi's dependencies are also only available on GitHub. We will install them manually beforehand to avoid problems.
 
 ```{r}
-#| label: install-netcomi
+#| label: install_netcomi
 #| eval: false
 
 devtools::install_github("zdk123/SpiecEasi")
@@ -39,6 +39,7 @@ devtools::install_github("stefpeschel/NetCoMi", force = TRUE, ref = "TSE",
 Load packages needed in this exercise.
 
 ```{r}
+#| label: load_packages
 library(NetCoMi)
 library(phyloseq)
 ```
@@ -48,7 +49,7 @@ library(phyloseq)
 The 88 soil dataset [@lauber2009pyrosequencing] is again used in this example.
 
 ```{r}
-#| label: load-data
+#| label: load_data
 #| warning: false
 #| echo: true
 
@@ -58,7 +59,7 @@ soil <- readRDS("data/soil_processed/soil.RDS")
 Take a look at the data
 
 ```{r}
-#| label: look-at-data
+#| label: look_at_data
 #| warning: false
 #| echo: true
 
@@ -84,6 +85,7 @@ If we want to generate a network on genus level, we run into two problems:
 -   Not all genera are unique.
 
 ```{r}
+#| label: taxtab
 table(taxtab[, "Genus"])
 ```
 
@@ -95,6 +97,7 @@ Solutions:
 NetCoMi provides a function `renameTaxa()`, which does this job for us. It can also be used to rename the taxa according to a desired pattern.
 
 ```{r}
+#| label: rename_genera
 # Rename taxonomic table and make Rank6 (genus) unique
 soil_renamed <- renameTaxa(soil, 
                            pat = "<name>", 
@@ -105,6 +108,7 @@ taxtab_renamed <- tax_table(soil_renamed)
 
 head(cbind(taxtab[, "Genus"], taxtab_renamed[, "Genus"]), 15)
 ```
+### Network construction
 
 Now, we can pass the phyloseq object with renamed genera to NetCoMi's `netConstruct()` function.
 
@@ -122,6 +126,7 @@ A few comments on the arguments:
 -   The "signed" method is used to transform associations into dissimilarities (argument `dissFunc`). Thus, strongly negatively associated taxa have a high dissimilarity and conversely a low similarity, corresponding to low edge weights on the network plot.
 
 ```{r}
+#| label: netconstruct_single
 #| eval: false
 net <- netConstruct(soil_renamed,
                     taxRank = "Genus",
@@ -141,12 +146,14 @@ net <- netConstruct(soil_renamed,
 ```
 
 ```{r}
+#| label: save_single_net
 #| echo: false
 #| eval: false
 saveRDS(net, file = "data/networks/spieceasi_net.RDS")
 ```
 
 ```{r}
+#| label: read_single_net
 #| echo: false
 net <- readRDS("data/networks/spieceasi_net.RDS")
 ```
@@ -156,6 +163,7 @@ net <- readRDS("data/networks/spieceasi_net.RDS")
 The object also contains an edge list, giving each edge's estimated association, dissimilarity, and adjacency. Let's take a quick look at the edges with the highest and lowest edge weights:
 
 ```{r edge_list}
+#| label: edge_list
 edgelist <- net$edgelist1[order(net$edgelist1$adja, decreasing = TRUE), ]
 head(edgelist)
 tail(edgelist)
@@ -163,25 +171,43 @@ tail(edgelist)
 
 ### Network analysis
 
+The `microNet` object is now passed to `netAnalyze` to perform network analysis.
+
+A few comments on the arguments:
+
+* `centrLCC = TRUE`: Centralities are calculated only for nodes in the largest connected component (LCC). 
+* Clusters: Identified using greedy modularity optimization (by `cluster_fast_greedy` from [`igraph`](https://igraph.org/r/) package).
+* Hubs: Nodes with an eigenvector centrality value above the empirical 95% quantile of all eigenvector centralities in the network.
+* `weightDeg = FALSE` and `normDeg = FALSE`: The degree of a node is simply the number of its adjacent nodes.
+* `gcmHeat = FALSE`: By default, a heatmap of the Graphlet Correlation Matrix (GCM) is plotted, which we disable here (`gcmHeat = FALSE`).
+
 ```{r}
+#| label: netanalyze_single
 netprops <- netAnalyze(net, 
+                       centrLCC = TRUE,
                        clustMethod = "cluster_fast_greedy",
                        hubPar = "eigenvector",
+                       hubQuant = 0.95,
+                       weightDeg = FALSE,
                        normDeg = FALSE,
                        gcmHeat = FALSE)
 ```
 
 ```{r}
+#| label: summary_single
 summary(netprops)
 ```
 
 ### Highlight node properties
 
-In the first plot, node colors represent the detected clusters and node sizes are scaled by eigenvector centrality. Hub nodes are highlighted by default. Singletons are not included in the plot. To improve the readability, NetCoMi's "intelligent" label shortening approach is used.
+In the first plot, **node colors** represent the detected **clusters** and **node sizes** are scaled by **eigenvector centrality**. **Hub nodes** are highlighted by default. Singletons are not included in the plot. 
 
-Note that nodes are sometimes placed too close together so that the labels overlap. You may need to play around with the repulsion argument until you find a value where the labels are legible, but also the clusters are still well recognizable.
+Note that nodes are sometimes placed too close together so that the labels overlap. You may need to play around with the `repulsion` argument until you find a value where the labels are legible, but also the clusters are still well recognizable.
 
-```{r network_plot_single_cluster, fig.width=13, fig.height=10}
+```{r, fig.width=13, fig.height=10}
+#| label: netplot_soil_props
+#| fig-width: 13
+#| fig-height: 10
 plot(netprops,
      repulsion = 0.95,
      rmSingles = TRUE,
@@ -206,9 +232,13 @@ legend(0.7, 1.1, cex = 1.7, title = "estimated correlation:",
 
 ### Highlight data features
 
-We now color nodes according to their phylum. The node sizes are proportional to a taxon's sum of mclr-transformed abundances. As already mentioned in Section \@ref(spring-network), this is the normalization method used by `SPRING`. A color palette from `RColorBrewer` is used here.
+We now **color** nodes according to their **phylum**. The **node sizes** are proportional to a taxon's sum of **clr-transformed abundances**. 
 
-```{r network_plot_single_phylum, fig.width=15, fig.height=10}
+```{r, fig.width=15, fig.height=10}
+#| label: netplot_soil_phyla
+#| fig-width: 13
+#| fig-height: 10
+#| 
 # Generate vector with phylum names for node coloring
 phyla <- as.factor(taxtab_renamed[, "Phylum"])
 names(phyla) <- taxtab_renamed[, "Genus"]
@@ -228,10 +258,9 @@ plot(netprops,
      nodeColor = "feature", 
      featVecCol = phyla, 
      colorVec =  colvec,
-     #nodeTransp = 20,
      highlightHubs = FALSE,
      cexNodes = 1.2,
-          cexLabels = 3,
+     cexLabels = 3,
      edgeTranspHigh = 20,
      title1 = "Data features highlighted", 
      showTitle = TRUE,
@@ -250,9 +279,15 @@ legend(-1.8, 1.1, cex = 1.7, pt.cex = 2.5, title = "Phylum:",
        legend=levels(phyla), col = col_transp, bty = "n", pch = 16) 
 ```
 
-Select Proteobacteria
+### Select Proteobacteria
 
-```{r}
+If we are interested in a sub-network (here only genera belonging to proteobacteria), we can also filter the nodes in the network plot.
+
+```{r, fig.width=15, fig.height=10}
+#| label: netplot_soil_proteo
+#| fig-width: 15
+#| fig-height: 10
+
 sel <- names(phyla[phyla == "Proteobacteria"])
 sel <- sel[sel %in% colnames(net$adjaMat1)]
 
@@ -270,7 +305,7 @@ plot(netprops,
      cexNodes = 1.8,
      cexLabels = 3,
      edgeTranspHigh = 20,
-     title1 = "Network properties highlighted", 
+     title1 = "Sub-network for proteobacteria", 
      showTitle = TRUE,
      cexTitle = 2.3,
      mar = c(1, 3, 4, 8))
@@ -279,4 +314,174 @@ legend(0.7, 1.1, cex = 1.7, title = "estimated correlation:",
        legend = c("+","-"), lty = 1, lwd = 3, col = c("#009900","red"), 
        bty = "n", horiz = TRUE)
 ```
+
+## Network comparison (acidic vs. basic)
+
+### Network construction
+
+Now, we might be interested in **how the association networks differ** between samples with a high and a low pH, or in other words, **between basic and acidic samples**. 
+
+```{r}
+#| label: split_phylo
+# Split the phyloseq object into two groups
+soil_acid <- phyloseq::subset_samples(soil_renamed, ph < 6.7)
+soil_basic <- phyloseq::subset_samples(soil_renamed, ph > 6.8)
+
+soil_acid
+soil_basic
+```
+
+```{r}
+#| label: nsamp
+n_basic <- phyloseq::nsamples(soil_basic)
+```
+
+We filter the `r n_basic` samples (sample size of the smaller group) with highest frequency to make the sample sizes equal and thus ensure comparability.
+
+```{r}
+#| label: netconstruct_groups
+#| eval: false
+net_groups <- netConstruct(data = soil_acid,
+                           data2 = soil_basic,
+                           taxRank = "Genus",
+                           filtSamp = "highestFreq",
+                           filtSampPar = list(highestFreq = n_basic),
+                           filtTax = "totalReads",
+                           filtTaxPar = list(totalReads = 1),
+                           measure = "spieceasi",
+                           measurePar = list(method = "mb",
+                                             pulsar.params = list(rep.num = 10)),
+                           zeroMethod = "none",
+                           normMethod = "none",
+                           sparsMethod = "none", 
+                           dissFunc = "signed",
+                           verbose = 3,
+                           seed = 12345)
+```
+
+```{r}
+#| label: saverds_groups
+#| echo: false
+#| eval: false
+saveRDS(net_groups, file = "data/networks/spieceasi_netcomp.RDS")
+```
+
+```{r}
+#| label: readrds_groups
+#| echo: false
+net_groups <- readRDS("data/networks/spieceasi_netcomp.RDS")
+```
+
+### Network analysis
+
+All network measures are now computed for both networks. 
+
+```{r}
+#| label: netanalyze_groups
+netprops_groups <- netAnalyze(net_groups, 
+                              centrLCC = TRUE,
+                              clustMethod = "cluster_fast_greedy",
+                              hubPar = "eigenvector",
+                              hubQuant = 0.95,
+                              weightDeg = FALSE,
+                              normDeg = FALSE,
+                              gcmHeat = FALSE)
+```
+
+### Visual comparison
+
+We start with a visual comparison of the two networks using NetCoMi's plot function. 
+
+```{r, fig.width=17, fig.height=8}
+#| label: netplot_acid_basic_difflay
+#| fig-width: 17
+#| fig-height: 8
+
+plot(netprops_groups,
+     repulsion = 0.96,
+     rmSingles = TRUE,
+     labelScale = FALSE,
+     nodeSize = "eigenvector",
+     nodeSizeSpread = 2,
+     nodeColor = "cluster", 
+     sameColThresh = 2,
+     hubBorderCol = "darkgray",
+     cexNodes = 2,
+     edgeTranspHigh = 20,
+     title1 = "Acidic", 
+     title2 = "Basic",
+     showTitle = TRUE,
+     cexTitle = 2,
+     cexLabels = 0.8,
+     mar = c(1, 4, 4, 4))
+
+# Overlay a transparent plot on which the legend is plotted
+par(fig=c(0, 1, 0, 1), oma=c(0, 0, 0, 0), mar=c(0, 0, 0, 0), new=TRUE)
+plot(0, 0, type='n', bty='n', xaxt='n', yaxt='n')
+
+legend(-0.2, -0.9, cex = 1.5, title = "estimated correlation:",
+       legend = c("+","-"), lty = 1, lwd = 3, col = c("#009900","red"), 
+       bty = "n", horiz = TRUE)
+```
+
+Layout computed separately for each network -> difficult to visually compare certain associations
+
+We now use the same layout in both groups.
+
+```{r, fig.width=17, fig.height=8}
+#| label: netplot_acid_basic_samelay
+#| fig-width: 17
+#| fig-height: 8
+
+plot(netprops_groups,
+     sameLayout = TRUE,
+     layoutGroup = "union",
+     repulsion = 0.96,
+     rmSingles = "inboth",
+     labelScale = FALSE,
+     nodeSize = "eigenvector",
+     nodeSizeSpread = 2,
+     nodeColor = "cluster", 
+     sameColThresh = 2,
+     hubBorderCol = "darkgray",
+     cexNodes = 2,
+     edgeTranspHigh = 20,
+     title1 = "Acidic", 
+     title2 = "Basic",
+     showTitle = TRUE,
+     cexTitle = 2,
+     cexLabels = 0.8,
+     mar = c(1, 4, 4, 4))
+
+# Add legend
+par(fig=c(0, 1, 0, 1), oma=c(0, 0, 0, 0), mar=c(0, 0, 0, 0), new=TRUE)
+plot(0, 0, type='n', bty='n', xaxt='n', yaxt='n')
+legend(-0.2, -0.8, cex = 1.7, title = "estimated correlation:",
+       legend = c("+","-"), lty = 1, lwd = 3, col = c("#009900","red"), 
+       bty = "n", horiz = TRUE)
+```
+
+
+### Quantitative network comparison
+
+```{r}
+#| label: netcomp
+netcomp <- netCompare(netprops_groups, 
+                      permTest = FALSE,
+                      nPerm = 1000,
+                      cores = 6,
+                      seed = 12345,
+                      storeAssoPerm = TRUE,
+                      fileStoreAssoPerm = "general/network_data/spring_assoPerm",
+                      verbose = TRUE)
+```
+
+```{r}
+#| label: summary_netcomp
+summary(netcomp, 
+        groupNames = c("Acidic", "Basic"),
+        numbNodes = 5)
+```
+
+
 

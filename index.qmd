@@ -68,7 +68,7 @@ Tuesday
 | 11:15 - 12:00    | Session 2: Principles of compositional data                             | Instructor CLM     |
 | 12:00 - 13:00    | Lunch break                                                             | all                |
 | 13:00 - 14:00    | Session 3: Exploratory analysis of compositional data in R (part I)     | Instructor CLM, VT  |
-| 14:15 - 15:15    | [Session 4: Exploratory analysis of compositional data in R (part II)](4_eda.qmd) | Instructor CLM, SP     |
+| 14:15 - 15:15    | [Session 4: Exploratory analysis of compositional data in R (part II)](4_eda_88soils.qmd) | Instructor CLM, SP     |
 | 15:15 - 15:45    | Fika                                                                    | all                |
 | 15:45 - 17:00    | Session 5: Differential abundance testing and regression                | Instructor CLM, VT |
 | 17:00 - open end | Application to own data                                                 | all                |

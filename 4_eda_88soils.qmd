@@ -1,0 +1,175 @@
+---
+title: "Exploratory analysis of compositional data (part II)"
+format: 
+  html:
+    code-fold: false
+    code-tools: true
+bibliography: references.bib
+editor: visual
+---
+
+## Exploratory analysis of a microbial data set
+
+Here we use the "88 soils" data set [@lauber2009pyrosequencing] containing bacterial communities in 88 soils from across North and South America.
+
+### Load packages and data data
+
+```{r}
+#| label: load_data
+#| warning: false
+#| message: false
+#| echo: true
+
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+
+soil <- readRDS("data/soil_processed/soil.RDS")
+```
+
+Take a look at the data
+
+```{r}
+#| label: look_at_data
+#| warning: false
+#| echo: true
+
+soil
+
+# Read count table
+otu_table(soil)[1:10, 1:6]
+
+# Taxonomy table
+taxtab <- tax_table(soil)
+head(taxtab)
+
+# Sample data
+sampdata <- sample_data(soil)
+head(sampdata)
+```
+
+### Microbial composition
+
+We first have a look at the microbial compositions on phylum level.
+
+```{r}
+soil_phyla <- tax_glom(soil, taxrank = "Phylum")
+```
+
+
+Stacked bar plot of the observed "absolute" abundances:
+
+```{r}
+plot_bar(soil_phyla, fill = "Phylum")
+```
+
+Stacked bar plot of the relative abundances:
+
+```{r}
+# Compute relative abundances
+otutab <- otu_table(soil_phyla)
+otutab <- sweep(otutab, 1, FUN = `/`, rowSums(otutab))*100
+soil_phyla@otu_table@.Data <- otutab
+```
+
+```{r}
+plot_bar(soil_phyla, fill = "Phylum")
+```
+
+### Distance calculation and visualization
+
+Distance functions provided by the phyloseq package:
+
+```{r}
+dist_methods <- unlist(distanceMethodList)
+dist_methods
+```
+
+#### MDS plot with Bray Curtis distance
+
+```{r}
+soil_mds <- ordinate(soil, method = "MDS", distance = "bray")
+```
+
+First a plot without coloring metadata.
+
+```{r}
+mds_soil <- plot_ordination(soil, soil_mds, title = "MDS of 88 soil data")
+
+mds_soil + theme_bw() + theme(text = element_text(size = 14)) + geom_point(size = 3)
+```
+
+One could identify two main clusters, separated by the first axis. 
+
+We now build two pH categories (acidic and basic) and color the samples in the MDS plot accordingly.
+
+```{r}
+# Add categorical variable to the data frame 
+sampdata$ph_type <- as.factor(ifelse(sampdata$ph < 6.7, "acid", "basic")) 
+
+head(sampdata)
+
+table(sampdata$ph_type)
+```
+Add the new data frame to the phyloseq object.
+
+```{r}
+sample_data(soil) <- sampdata
+```
+
+
+```{r}
+mds_soil <- plot_ordination(soil, soil_mds, color = "ph_type",
+                            title = "MDS of 88 soil data colored by pH type")
+
+mds_soil + theme_bw() + theme(text = element_text(size = 14)) + geom_point(size = 3)
+```
+
+Indeed, pH type separates samples along Axis.1. 
+
+#### MDS plots for several distance measures
+
+Now, we apply all available distance functions to the data, compute the corresponding MDS embeddings, and plot them.
+
+First, we have to remove the unwanted distances.
+
+```{r}
+filtered_methods <- dist_methods[!dist_methods %in% c("unifrac", "wunifrac",
+                                                      "dpcoa", "ANY", "morisita")]
+```
+
+Now we can apply these distance metrics to our data. 
+
+```{r}
+gather_ordination_data <- function(d_method, phylo_obj){
+  # Calculate the MDS matrix using the distance
+  ordinate_obj <- ordinate(phylo_obj, method = "MDS", distance = d_method)
+  # Get the data for plotting
+  plot_data <- plot_ordination(phylo_obj, ordinate_obj)$data
+  # Add a column for distance
+  plot_data$distance <- d_method
+  return(plot_data)
+}
+
+mds_plot_data <- bind_rows(lapply(filtered_methods, gather_ordination_data,
+                                  phylo_obj = soil))
+
+head(mds_plot_data)
+```
+
+We color again according to pH type.
+
+```{r}
+#| fig-width: 14
+#| fig-height: 9
+
+mds_soil <- ggplot(mds_plot_data, aes(x=Axis.1, y=Axis.2, color=ph_type)) +
+  geom_point() +
+  facet_wrap(~ distance, scales = "free") +
+  labs(x="Axis.1",
+       y="Axis.2",
+       title="Separation of 88 soil samples according to different distances")
+
+mds_soil + theme_bw() + theme(text = element_text(size = 12))
+```
+
